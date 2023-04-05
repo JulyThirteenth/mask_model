@@ -65,23 +65,32 @@ class Config(dict):
         self['eos_id'] = 2
         self['pad_id'] = 0
         self['lr'] = 3e-5
-        self['pretrain_model'] = "model_27_1.420446366071701.pt"
+        self['pretrain_model'] = None
         self['start_epoch'] = 28
         self['n_epoch'] = self['start_epoch'] + 50
         self['model_dir'] = 'checkpoint/pretrain/%d' % self['version']
 
 
-def array2str(arr, sos_id, eos_id, pad_id):
-    out = ""
-    for i in range(len(arr)):
-        if arr[i] == pad_id or arr[i] == eos_id:
-            break
-        if arr[i] == sos_id:
+def get_state_dict(model):
+    ret = {}
+    for key in model:
+        if isinstance(model[key], torch.nn.DataParallel):
+            ret[key] = model[key].module.state_dict()
+        else:
+            ret[key] = model[key].state_dict()
+    return ret
+
+
+def load_model(model, file_path):
+    memory = torch.load(file_path)
+    for key in memory:
+        if key not in model:
+            print('loaded key not in model:', key)
             continue
-        out += str(int(arr[i])) + " "
-    if len(out.strip()) == 0:
-        out = "0"
-    return out.strip()
+        if isinstance(model[key], torch.nn.DataParallel):
+            model[key].module.load_state_dict(memory[key])
+        else:
+            model[key].load_state_dict(memory[key])
 
 
 def train(config):
@@ -97,11 +106,11 @@ def train(config):
         sos_id=config['sos_id'],
         pad_id=config['pad_id']
     ).to(config['device'])
-    if config['pretrain_model'] is not None:
-        pretrain.load_state_dict(torch.load(config['pretrain_model']), strict=False)
-        print("load pretrain model successfully!")
     if config['multi_train']:
         pretrain = torch.nn.DataParallel(pretrain, device_ids=config["device_ids"])
+    if config['pretrain_model'] is not None:
+        load_model(pretrain, config['pretrain'])
+        print("load pretrain model successfully!")
 
     optim = Adam(pretrain.parameters(), lr=3e-5)
     loss_func = CrossEntropyLoss(ignore_index=0).to(config['device'])
@@ -118,7 +127,7 @@ def train(config):
         for idx, (source, target, position) in enumerate(process_bar):
             source, target, position = source.to(config['device']), target.to(config['device']), \
                 position.to(config['device'])
-            pred = pretrain(source, target)*position.unsqueeze(dim=-1)
+            pred = pretrain(source, source[:, config['prefix_len']:]) * position.unsqueeze(dim=-1)
             pred = pred.reshape(-1, pred.shape[-1])
             target = target.reshape(-1)
             loss = loss_func(pred, target.long())
@@ -135,7 +144,7 @@ def train(config):
         if mean_loss < best_loss:
             best_loss = mean_loss
             torch.save(
-                pretrain.state_dict(),
+                get_state_dict(pretrain),
                 config["model_dir"] + "/model_{}_{}.pt".format(epoch, best_loss),
             )
     writer.close()
