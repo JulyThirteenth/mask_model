@@ -9,9 +9,9 @@ class Preprocess:
                  input_len: int = 160, output_len: int = 150,
                  pad_id: int = 0, sos_id: int = 1, eos_id: int = 2):
         if input_prefix is None:
-            input_prefix = [1] * 10  # 预测输入mask的prefix
+            input_prefix = [1] * 10  # 预测输入mask任务的prefix
         if output_prefix is None:
-            output_prefix = [2] * 10  # 预测输出mask的prefix
+            output_prefix = [2] * 10  # 预测输出mask任务的prefix
         if trans_prefix is None:
             trans_prefix = [3] * 10  # 翻译任务的prefix
         self.__mask_id = mask_id
@@ -25,23 +25,48 @@ class Preprocess:
         self.__sos_id = sos_id
         self.__eos_id = eos_id
 
-    def for_finetune(self, data_file: str, shuffle=False):
+    def for_finetune(self, data_file: str, train_perc: float = 0.9, shuffle=True):
         with open(data_file, 'r') as fp:
             reader = csv.reader(fp)
             samples = [row for row in reader]
         fp.close()
-        data_trans = []
-        for sample in samples:
+        if shuffle:  # 打乱原始数据
+            random.shuffle(samples)
+        '''
+        构造finetune训练数据集
+        '''
+        train_data = []
+        for sample in samples[:int(train_perc * len(samples))]:
             source = [int(x) for x in sample[1].split()]
-            for prefix in self.__trans_prefix:
-                source.insert(0, prefix)
+            target = [self.__sos_id] + [int(x) for x in sample[2].split()] + [self.__eos_id]
+            if len(target) < self.__output_len:
+                target.extend([self.__pad_id] * (self.__output_len - len(target)))
+            for _ in range(4):
+                mask_src = self.__random_mask(source)[0]
+                mask_src = self.__trans_prefix + mask_src
+                if len(mask_src) < self.__input_len:
+                    mask_src.extend([self.__pad_id] * (self.__input_len - len(mask_src)))
+                train_data.append([mask_src, target])
+            source = self.__trans_prefix + source
+            if len(source) < self.__input_len:
+                source.extend([self.__pad_id] * (self.__input_len - len(source)))
+            train_data.append([source, target])
+        '''
+        构造finetune测试数据集
+        '''
+        valid_data = []
+        for sample in samples[int(train_perc * len(samples)):]:
+            source = [int(x) for x in sample[1].split()]
             if len(source) < self.__input_len:
                 source.extend([self.__pad_id] * (self.__input_len - len(source)))
             target = [self.__sos_id] + [int(x) for x in sample[2].split()] + [self.__eos_id]
             if len(target) < self.__output_len:
                 target.extend([self.__pad_id] * (self.__output_len - len(target)))
-            data_trans.append([source, target])
-        return np.array(data_trans, dtype=object)
+            valid_data.append([source, target])
+        # 打乱训练测试数据集
+        random.shuffle(valid_data)
+        random.shuffle(train_data)
+        return np.array(train_data, dtype=object), np.array(valid_data, dtype=object)
 
     def for_pretrain(self, data_file: str, shuffle=False):
         with open(data_file, 'r') as fp:
@@ -60,8 +85,7 @@ class Preprocess:
             random.shuffle(data_input)
             random.shuffle(data_output)
         for ele in data_input:  # handle input pretrain
-            for prefix in self.__input_prefix:
-                ele[0].insert(0, prefix)  # add input task prefix
+            ele[0] = self.__input_prefix + ele[0]  # add input task prefix
             if len(ele[0]) < self.__input_len:  # add pad_id
                 ele[0].extend([self.__pad_id] * (self.__input_len - len(ele[0])))
             if len(ele[1]) < self.__output_len:  # add pad_id
@@ -69,8 +93,7 @@ class Preprocess:
             if len(ele[2]) < self.__output_len:  # add pad_id
                 ele[2].extend([self.__pad_id] * (self.__output_len - len(ele[2])))
         for ele in data_output:  # handle output pretrain
-            for prefix in self.__output_prefix:
-                ele[0].insert(0, prefix)  # add output task prefix
+            ele[1] = self.__output_prefix + ele[1]  # add output task prefix
             if len(ele[0]) < self.__input_len:  # add pad_id
                 ele[0].extend([self.__pad_id] * (self.__input_len - len(ele[0])))
             # ele[1] = [self.sos_id] + ele[1] + [self.eos_id]  # add sos_id, eos_id
@@ -87,7 +110,7 @@ class Preprocess:
         if len(words) == 1:
             return words
         # randomly mask words with probability p
-        mask_words = []  # record word after mask
+        mask_words = []  # record words after mask
         mask_label = []  # record ground truth
         mask_pos = []  # record mask position
         mask_num = 0
@@ -116,6 +139,7 @@ if __name__ == "__main__":
 
     current_work_dir = os.path.dirname(os.path.realpath(__file__))
     os.chdir(current_work_dir)  # change work dir to current work dir
+    # 预训练数据预处理
     Path('data/pretrain').mkdir(exist_ok=True, parents=True)
     pre = Preprocess()
     (data_in, data_out) = pre.for_pretrain("data/train.csv")
@@ -127,14 +151,17 @@ if __name__ == "__main__":
     print("input pretrain shape: ", data_in.shape, "output pretrain shape: ", data_out.shape)
     np.save('data/pretrain/data_in', data_in)
     np.save('data/pretrain/data_out', data_out)
-    data_in = Preprocess().for_pretrain('data/test.csv')
+    data_in = pre.for_pretrain('data/test.csv')
     # for idx in range(5):
     #     print("mask with unmask: ", data_in[idx][0], data_in[idx][1], sep='\n')
     print("test input pretrain shape: ", data_in.shape)
     np.save('data/pretrain/data_in_test', data_in)
+    # finetune数据预处理
     Path('data/finetune').mkdir(exist_ok=True, parents=True)
-    data_trans = pre.for_finetune("data/train.csv")
+    train, valid = pre.for_finetune("data/train.csv", shuffle=True)
     # for idx in range(5):
-    #     print("trans: ", data_trans[idx][0], data_trans[idx][1], sep='\n')
-    print("trans finetune shape: ", data_trans.shape)
-    np.save('data/finetune/data_trans', data_trans)
+    #     print("trans: ", train[idx][0], train[idx][1], sep='\n')
+    #     print("trans mask:", valid[idx][0], valid[idx][1], sep='\n')
+    print("train finetune shape: ", train.shape, "valid finetune shape: ", valid.shape)
+    np.save('data/finetune/train', train)
+    np.save('data/finetune/valid', valid)

@@ -16,34 +16,6 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
-class Config(dict):
-    def __init__(self, version):
-        super().__init__()
-        self['version'] = version
-        self['device'] = 'cuda:0'
-        self['multi_train'] = False
-        if self['multi_train']:
-            self['device_ids'] = [0, 1, 2, 3]
-            self['batch_size'] = 64 * len(self['device_ids'])
-        else:
-            self['batch_size'] = 32
-        self['trans_data'] = "data/finetune/data_trans.npy"
-        self['train_batch'] = 32
-        self['valid_batch'] = 32
-        self['input_len'] = 160
-        self['output_len'] = 150
-        self['n_token'] = 2000
-        self['n_layer'] = 6
-        self['sos_id'] = 1
-        self['eos_id'] = 2
-        self['pad_id'] = 0
-        self['lr'] = 3e-5
-        self['start_epoch'] = 0
-        self['n_epoch'] = self['start_epoch'] + 50
-        self['pretrain_model'] = None
-        self['model_dir'] = 'checkpoint/finetune/%d' % self['version']
-
-
 class Logger:
     def __init__(self, file_name, mode="w", buffer=100):
         Path(file_name).parent.mkdir(exist_ok=True, parents=True)
@@ -72,6 +44,53 @@ class Logger:
         self.fp.close()
 
 
+class Checkpoint:
+    def __init__(self, model):
+        self.model = model
+
+    def load(self, model_path):
+        memory = torch.load(model_path)
+        if isinstance(self.model, torch.nn.DataParallel):
+            self.model.module.load_state_dict(memory)
+        else:
+            self.model.load_state_dict(memory)
+
+    def save(self, save_path):
+        if isinstance(self.model, torch.nn.DataParallel):
+            ret = self.model.module.state_dict()
+        else:
+            ret = self.model.state_dict()
+        torch.save(ret, save_path)
+
+
+class Config(dict):
+    def __init__(self, version):
+        super().__init__()
+        self['version'] = version
+        self['device'] = 'cuda:0'
+        self['multi_train'] = False
+        if self['multi_train']:
+            self['device_ids'] = [0, 1]
+            self['train_batch'] = 64 * len(self['device_ids'])
+        else:
+            self['train_batch'] = 32
+        self['valid_batch'] = 32
+        self['train_data'] = "data/finetune/train.npy"
+        self['valid_data'] = "data/finetune/valid.npy"
+        self['input_len'] = 160
+        self['output_len'] = 150
+        self['n_token'] = 2000
+        self['n_layer'] = 6
+        self['sos_id'] = 1
+        self['eos_id'] = 2
+        self['pad_id'] = 0
+        self['lr'] = 3e-5
+        self['pretrain_model'] = "model_2_2.370066770303609.pt"
+        self['start_epoch'] = 0
+        self['n_epoch'] = self['start_epoch'] + 50
+        self['model_dir'] = 'checkpoint/finetune/%d' % self['version']
+
+
 def array2str(arr, sos_id, eos_id, pad_id):
     out = ""
     for i in range(len(arr)):
@@ -87,12 +106,12 @@ def array2str(arr, sos_id, eos_id, pad_id):
 
 def train(config):
     # print(config)
-    train_data = FinetuneDataset("train", config["trans_data"])
-    valid_data = FinetuneDataset("valid", config["trans_data"])
-    train_loader = DataLoader(train_data, batch_size=config["train_batch"] * len(config["device_ids"]),
-                              shuffle=True, drop_last=False, num_workers=16)
-    valid_loader = DataLoader(valid_data, batch_size=config["valid_batch"] * len(config["device_ids"]),
-                              shuffle=True, drop_last=False, num_workers=16)
+    train_data = FinetuneDataset(config["train_data"])
+    valid_data = FinetuneDataset(config["valid_data"])
+    train_loader = DataLoader(train_data, batch_size=config["train_batch"],
+                              shuffle=True, drop_last=False, num_workers=0)
+    valid_loader = DataLoader(valid_data, batch_size=config["valid_batch"],
+                              shuffle=True, drop_last=False, num_workers=0)
     # print(len(train_loader), len(valid_loader), sep='\n')
 
     finetune = Transformer(
@@ -104,10 +123,14 @@ def train(config):
         sos_id=config['sos_id'],
         pad_id=config['pad_id']
     ).to(config['device'])
+    checkpoint = Checkpoint(finetune)
     # for _, parameter in finetune.encoder.named_parameters():
     #     parameter.requires_grad = False
     if config['multi_train']:
         finetune = torch.nn.DataParallel(finetune, device_ids=config["device_ids"])
+    if config['pretrain_model'] is not None:
+        checkpoint.load(config['pretrain_model'])
+        print("load pretrain model successfully!")
 
     # optim = Adam(filter(lambda p: p.requires_grad, finetune.parameters()), lr=config["lr"]) # 只更新decoder部分参数
     optim = Adam(finetune.parameters(), lr=config["lr"])
@@ -124,8 +147,7 @@ def train(config):
             source, target = source.to(config["device"]), target.to(config["device"])
             # print(source.shape, target.shape, sep='\n')
             pred = finetune(source, target)
-            pred = pred[:, :-1]
-            target = target[:, 1:]
+            pred, target = pred[:, :-1], target[:, 1:]
             loss = loss_func(
                 pred.reshape(-1, pred.shape[-1]), target.reshape(-1).long()
             )
@@ -138,7 +160,7 @@ def train(config):
             )
         logger.log("epoch: %d:" % epoch, "mean loss: %f of " % np.mean(losses), losses)
         writer.add_scalar("batch loss", np.mean(losses), epoch)
-        if epoch % 5 == 0:  # valid
+        if epoch % 1 == 0:  # valid
             finetune.eval()
             res, gts = [], {}
             tot = 0
@@ -174,10 +196,7 @@ def train(config):
                 cider_score, cider_scores = CiderD_scorer.compute_score(gts, res)
                 process_bar.set_postfix(epoch=epoch, idx=idx, CIDEr=cider_score)
             cider_score, cider_scores = CiderD_scorer.compute_score(gts, res)
-            torch.save(
-                finetune.state_dict(),
-                config["model_dir"] + "/model_{}_{}.pt".format(epoch, cider_score),
-            )
+            checkpoint.save(config["model_dir"] + "/model_{}_{}.pt".format(epoch, cider_score))
             finetune.train()
             logger.log("valid: cider score = %f of " % cider_score, list(cider_scores))
             writer.add_scalar("cider score", cider_score, epoch)

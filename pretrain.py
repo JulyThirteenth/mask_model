@@ -14,7 +14,7 @@ from tqdm import tqdm
 from dataset import PretrainDataset
 from model import Transformer
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3, 4, 5"
 
 
 class Logger:
@@ -86,7 +86,7 @@ class Config(dict):
         self['sos_id'] = 1
         self['eos_id'] = 2
         self['pad_id'] = 0
-        self['lr'] = 1e-3
+        self['lr'] = 1e-4
         self['pretrain_model'] = None
         self['start_epoch'] = 0
         self['n_epoch'] = self['start_epoch'] + 50
@@ -114,7 +114,7 @@ def train(config):
         print("load pretrain model successfully!")
 
     optim = Adam([{'params': pretrain.parameters(), 'initial_lr': 1e-3}], lr=config['lr'])
-    lr_schedule = StepLR(optim, 5, 0.9, last_epoch=config['start_epoch'])
+    lr_schedule = StepLR(optim, 4000, 0.8, last_epoch=config['start_epoch'])
     loss_func = CrossEntropyLoss(ignore_index=0).to(config['device'])
 
     Path(config["model_dir"]).mkdir(exist_ok=True, parents=True)
@@ -139,7 +139,7 @@ def train(config):
             lr_schedule.step()
             losses.append(loss.item())
             process_bar.set_postfix(
-                epoch=epoch, lr="%.3f" % lr_schedule.get_last_lr()[-1], loss="%.3f" % float(np.mean(losses))
+                epoch=epoch, lr="%.6f" % lr_schedule.get_last_lr()[-1], loss="%.3f" % float(np.mean(losses))
             )
         mean_loss = np.mean(losses)
         logger.log("epoch: %d:" % epoch, "mean loss: %f of " % mean_loss, losses)

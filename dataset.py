@@ -20,7 +20,7 @@ class PretrainDataset(Dataset):
 
 
 class FinetuneDataset(Dataset):
-    def __init__(self, data_file: str, shuffle: bool = False):
+    def __init__(self,data_file: str, shuffle: bool = False):
         super().__init__()
         self.data = np.load(data_file, allow_pickle=True)
         if shuffle:
@@ -40,7 +40,7 @@ if __name__ == "__main__":
     (source, target, position) = next(iter(pretrain_loader))
     print("source shape: {}".format(source.shape), "target shape: {}".format(target.shape),
           "position shape: {}".format(position.shape), sep='\n')
-    finetune = FinetuneDataset("data/finetune/data_trans.npy")
-    finetune_loader = DataLoader(finetune, batch_size=32, shuffle=True, drop_last=False)
-    (source, target) = next(iter(finetune_loader))
+    train = FinetuneDataset("data/finetune/train.npy")
+    train_loader = DataLoader(train, batch_size=32, shuffle=True, drop_last=False)
+    (source, target) = next(iter(train_loader))
     print("source shape: {}".format(source.shape), "target shape: {}".format(target.shape), sep='\n')
