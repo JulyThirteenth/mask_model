@@ -93,10 +93,9 @@ class Preprocess:
             if len(ele[2]) < self.__output_len:  # add pad_id
                 ele[2].extend([self.__pad_id] * (self.__output_len - len(ele[2])))
         for ele in data_output:  # handle output pretrain
-            ele[1] = self.__output_prefix + ele[1]  # add output task prefix
+            ele[0] = self.__output_prefix + ele[0]  # add output task prefix
             if len(ele[0]) < self.__input_len:  # add pad_id
                 ele[0].extend([self.__pad_id] * (self.__input_len - len(ele[0])))
-            # ele[1] = [self.sos_id] + ele[1] + [self.eos_id]  # add sos_id, eos_id
             if len(ele[1]) < self.__output_len:  # add pad_id
                 ele[1].extend([self.__pad_id] * (self.__output_len - len(ele[1])))
             if len(ele[2]) < self.__output_len:  # add pad_id
@@ -143,17 +142,18 @@ if __name__ == "__main__":
     Path('data/pretrain').mkdir(exist_ok=True, parents=True)
     pre = Preprocess()
     (data_in, data_out) = pre.for_pretrain("data/train.csv")
-    # for idx in range(5):
-    #     print("mask input with mask token, mask position: ",
-    #           data_in[idx][0], data_in[idx][1], data_in[idx][2], sep='\n')
-    #     print("mask output with mask token, mask position: ",
-    #           data_out[idx][0], data_out[idx][1], data_in[idx][2], sep='\n')
+    for idx in range(5):
+        print("mask input with mask token, mask position: ",
+              data_in[idx][0], data_in[idx][1], data_in[idx][2], sep='\n')
+        print("mask output with mask token, mask position: ",
+              data_out[idx][0], data_out[idx][1], data_out[idx][2], sep='\n')
     print("input pretrain shape: ", data_in.shape, "output pretrain shape: ", data_out.shape)
     np.save('data/pretrain/data_in', data_in)
     np.save('data/pretrain/data_out', data_out)
     data_in = pre.for_pretrain('data/test.csv')
-    # for idx in range(5):
-    #     print("mask with unmask: ", data_in[idx][0], data_in[idx][1], sep='\n')
+    for idx in range(5):
+        print("mask input with mask token, mask position: ",
+              data_in[idx][0], data_in[idx][1], data_in[idx][2], sep='\n')
     print("test input pretrain shape: ", data_in.shape)
     np.save('data/pretrain/data_in_test', data_in)
     # finetune数据预处理

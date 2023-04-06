@@ -1,15 +1,13 @@
 import copy
 from collections import defaultdict
 import numpy as np
-import pdb
 import math
 import six
 from six.moves import cPickle
 import os
-import csv
 
 
-def precook(s, n=4, out=False):
+def precook(s, n=4):
     """
     Takes a string as input and returns an object that can be given to
     either cook_refs or cook_test. This is optional: cook_refs and cook_test

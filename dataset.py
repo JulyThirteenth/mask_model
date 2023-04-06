@@ -20,7 +20,7 @@ class PretrainDataset(Dataset):
 
 
 class FinetuneDataset(Dataset):
-    def __init__(self,data_file: str, shuffle: bool = False):
+    def __init__(self, data_file: str, shuffle: bool = False):
         super().__init__()
         self.data = np.load(data_file, allow_pickle=True)
         if shuffle:
